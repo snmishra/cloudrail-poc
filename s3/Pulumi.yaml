@@ -1,0 +1,4 @@
+name: s3-poc
+runtime:
+  name: python
+description: A minimal AWS Python Pulumi program
