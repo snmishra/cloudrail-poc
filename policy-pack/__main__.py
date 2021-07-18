@@ -22,6 +22,8 @@ from pulumi_policy import (
     StackValidationPolicy,
 )
 
+from cloudrail_mapper.s3 import make_s3_bucket_context
+
 DEFAULT_ACCOUNT = boto3.client("sts").get_caller_identity().get("Account")
 DEFAULT_REGION = "us-east-1"
 
@@ -42,27 +44,14 @@ def s3_no_public_read_validator(
 def cloudrail_validator(
     args: ResourceValidationArgs, report_violation: ReportViolation
 ):
+    """Test against CloudRail rules."""
     region: str = DEFAULT_REGION
     if args.provider is not None:
         region = args.provider.props.get("region", DEFAULT_REGION)
     if args.resource_type == "aws:s3/bucket:Bucket":
         # We only have bucket name and acl available during preview
         account_id = DEFAULT_ACCOUNT
-        bucket = S3Bucket(
-            account=account_id,
-            bucket_name=args.props["bucket"],
-            arn=args.props.get("arn", None),
-            region=region,
-            policy=args.props.get("policy", None),
-        )
-        bucket.versioning_data = S3BucketVersioning(
-            account=account_id,
-            bucket_name=args.props["bucket"],
-            region=region,
-            versioning=args.props.get("versioning", False)
-            and args.props["versioning"].get("enabled", False),
-        )
-        context = AwsEnvironmentContext(s3_buckets=AliasesDict(bucket))
+        context = make_s3_bucket_context(args, account_id=account_id, region=region)
         rule = EnsureS3BucketsVersioningRule()
         result = rule.run(context, {})
         if result.status == RuleResultType.FAILED:
