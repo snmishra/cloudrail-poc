@@ -59,7 +59,7 @@ def make_api_gateway_stage_context(
         api_gw_id=args.props["rest_api"],
         stage_name=args.props["stage_name"],
         xray_tracing_enabled=args.props.get("xray_tracing_enabled", False),
-        access_logs=access_log_settings,
+        access_logs=access_logs,
         account=account_id,
         region=region,
     )
