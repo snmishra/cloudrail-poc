@@ -1,5 +1,6 @@
 from __future__ import annotations
-from typing import Literal
+
+from typing import Literal, Optional, Sequence, cast
 
 from cloudrail.knowledge.context.aliases_dict import AliasesDict
 from cloudrail.knowledge.context.aws.aws_environment_context import (
@@ -10,6 +11,7 @@ from cloudrail.knowledge.context.aws.s3.public_access_block_settings import (
     PublicAccessBlockLevel,
     PublicAccessBlockSettings,
 )
+from cloudrail.knowledge.context.aws.s3.s3_acl import GranteeTypes, S3ACL, S3Permission
 from cloudrail.knowledge.context.aws.s3.s3_bucket import S3Bucket
 from cloudrail.knowledge.context.aws.s3.s3_bucket_access_point import (
     S3BucketAccessPoint,
@@ -20,23 +22,24 @@ from cloudrail.knowledge.context.aws.s3.s3_bucket_encryption import S3BucketEncr
 from cloudrail.knowledge.context.aws.s3.s3_bucket_logging import S3BucketLogging
 from cloudrail.knowledge.context.aws.s3.s3_bucket_object import S3BucketObject
 from cloudrail.knowledge.context.aws.s3.s3_bucket_versioning import S3BucketVersioning
-import pulumi_aws
-from pulumi_aws.s3 import bucket_object
-from pulumi_aws.s3.access_point import AccessPointArgs
-from pulumi_aws.s3.get_bucket import GetBucketResult
-
 from pulumi_policy import ResourceValidationArgs
 from pulumi_policy.policy import ResourceValidationArgs
+from pulumi_aws.s3.outputs import BucketGrant, BucketServerSideEncryptionConfiguration
 
 from .exceptions import InvalidResource
 
 
-def make_s3_bucket_context(args: ResourceValidationArgs, account_id: str, region: str):
+class S3BucketValidationArgs(ResourceValidationArgs):
+    resource_type: Literal["aws:s3/bucket:Bucket"]
+
+
+def make_s3_bucket_context(args: S3BucketValidationArgs, account_id: str, region: str):
     RESOURCE_TYPE = "aws:s3/bucket:Bucket"
     if args.resource_type != RESOURCE_TYPE:
         raise InvalidResource(
             f"Expected resource of type {RESOURCE_TYPE}, got {args.resource_type}"
         )
+    bucket_name = args.props["bucket"]
     bucket = S3Bucket(
         account=account_id,
         bucket_name=args.props["bucket"],
@@ -55,7 +58,7 @@ def make_s3_bucket_context(args: ResourceValidationArgs, account_id: str, region
     bucket.versioning_data = s3_bucket_versioning
 
     # Add logging
-    loggings = getattr(args.props, "loggings", None)
+    loggings = args.props.get("loggings")
     # Not sure if this needs to be awaited?
     s3_bucket_loggings: list[S3BucketLogging] | None = None
     if loggings is not None:
@@ -85,11 +88,33 @@ def make_s3_bucket_context(args: ResourceValidationArgs, account_id: str, region
         ]
         bucket.encryption_data = s3_bucket_encryption[0]
 
+    # Add ACLs
+    acls: Optional[Sequence[BucketGrant]] = args.props.get("grants")
+    s3_acls: Optional[list[S3ACL]] = None
+    if acls is not None:
+        s3_acls = []
+        for acl in acls:
+            for perm in acl.permissions:
+                s3_acls.append(
+                    S3ACL(
+                        s3_permission=S3Permission(perm),
+                        grantee_type=GranteeTypes(acl.type),
+                        type_value=cast(
+                            str, acl.id if acl.type == "CanonicalUser" else acl.uri
+                        ),
+                        bucket_name=bucket_name,
+                        account=account_id,
+                        region=region,
+                    )
+                )
+        bucket.acls = s3_acls
+
     context = AwsEnvironmentContext(
         s3_buckets=AliasesDict(bucket),
         s3_bucket_versioning=[s3_bucket_versioning],
         s3_bucket_encryption=s3_bucket_encryption,
         s3_bucket_logs=s3_bucket_loggings,
+        s3_bucket_acls=s3_acls,
     )
     return context
 
